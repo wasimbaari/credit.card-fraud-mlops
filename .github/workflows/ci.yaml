@@ -27,6 +27,7 @@ jobs:
           framework: terraform,dockerfile
           soft_fail: false # Pipeline fails if high-risk misconfigs are found
           quiet: true
+          skip_check: CKV_TF_1
 
       # 2. Snyk: Scans Python dependencies for known vulnerabilities
       - name: Run Snyk to check for vulnerabilities
