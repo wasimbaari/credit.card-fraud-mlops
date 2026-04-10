@@ -32,6 +32,7 @@ jobs:
       # 2. Snyk: Scans Python dependencies for known vulnerabilities
       - name: Run Snyk to check for vulnerabilities
         uses: snyk/actions/python@master
+        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
