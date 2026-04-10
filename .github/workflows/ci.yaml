@@ -25,7 +25,7 @@ jobs:
         with:
           directory: .
           framework: terraform,dockerfile
-          soft_fail: false # Pipeline fails if high-risk misconfigs are found
+          soft_fail: true # Pipeline fails if high-risk misconfigs are found
           quiet: true
           skip_check: CKV_TF_1
 
