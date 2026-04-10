@@ -1,0 +1,12 @@
+﻿venv/
+__pycache__/
+.terraform/
+*.tfstate*
+.terraform.lock.hcl
+mlruns/
+mlflow.db
+*.db
+trust-policy.json
+s3-policy.json
+data/
+!data/raw/*.dvc
