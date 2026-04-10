@@ -1,0 +1,85 @@
+name: DevSecOps MLOps Pipeline
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write # Required for uploading scan results to GitHub Security tab
+
+jobs:
+  security-scan:
+    name: Security Gates (IaC & Code)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 1. Checkov: Scans Terraform and Dockerfiles for misconfigurations
+      - name: Run Checkov (IaC Scan)
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform,dockerfile
+          soft_fail: false # Pipeline fails if high-risk misconfigs are found
+          quiet: true
+
+      # 2. Snyk: Scans Python dependencies for known vulnerabilities
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/python@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
+  build-and-deploy:
+    name: Build and Secure Image
+    needs: security-scan
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: fraud-training
+      # Versioning: e.g., v23 (using run_number for unique, incremental versions)
+      VERSION: v${{ github.run_number }}
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 3. Build the Image
+      - name: Build Docker Image
+        run: |
+          docker build -f docker/training.Dockerfile \
+            -t ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} .
+
+      # 4. Trivy: Scan the Container Image before pushing
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          format: 'table'
+          exit-code: '1' # Fails the build if vulnerabilities are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # 5. Push to ECR only if all scans pass
+      - name: Push Image to ECR
+        run: |
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          
+          # Output the final image tag for use in ArgoCD or KServe
+          echo "IMAGE_TAG=${{ env.VERSION }}" >> $GITHUB_ENV

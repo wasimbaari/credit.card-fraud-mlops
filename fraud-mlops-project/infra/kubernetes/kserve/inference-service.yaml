@@ -1,0 +1,12 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: fraud-detection
+spec:
+  predictor:
+    xgboost:
+      storageUri: "s3://wasim-fraud-mlops-artifacts/mlflow/1/your-run-id/artifacts/model"
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
