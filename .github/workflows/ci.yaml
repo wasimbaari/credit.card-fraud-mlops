@@ -83,4 +83,4 @@ steps:
   - name: Push Image to ECR
     run: |
       docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
-```
+
