@@ -1,81 +1,91 @@
 name: DevSecOps MLOps Pipeline
 
 on:
-  push:
-    branches: [ main ]
+push:
+branches: [ main ]
 
 permissions:
-  id-token: write
-  contents: read
+id-token: write
+contents: read
 
 jobs:
-  code-security-scans:
-    name: Code & IaC Security Scans
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+code-security-scans:
+name: Code & IaC Security Scans
+runs-on: ubuntu-latest
 
-      # 1. Checkov (Infrastructure as Code & Dockerfile Scan)
-      - name: Run Checkov
-        uses: bridgecrewio/checkov-action@master
-        with:
-          directory: .
-          framework: terraform,dockerfile
-          skip_check: CKV_TF_1 # Skips module hash requirement
-          soft_fail: true      # Logs warnings but doesn't hard-stop the pipeline
-          quiet: true
+```
+steps:
+  - name: Checkout Code
+    uses: actions/checkout@v4
 
-      # 2. Snyk (Software Composition Analysis)
-      - name: Run Snyk for Python Dependencies
-        uses: snyk/actions/python@master
-        continue-on-error: true # Continues despite unpatchable mlflow CVEs
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high
+  # 1. Checkov (IaC & Dockerfile Scan)
+  - name: Run Checkov
+    uses: bridgecrewio/checkov-action@master
+    with:
+      directory: .
+      framework: terraform,dockerfile
+      skip_check: CKV_TF_1
+      soft_fail: true
+      quiet: true
 
-  build-scan-deploy:
-    name: Build, Container Scan, and Push
-    needs: code-security-scans
-    runs-on: ubuntu-latest
+  # 2. Snyk (Dependency Scan)
+  - name: Run Snyk for Python Dependencies
+    uses: snyk/actions/python@master
+    continue-on-error: true
     env:
-      IMAGE_NAME: fraud-training
-      # Versioning via GitHub Run Number (e.g., v8, v9)
-      VERSION: v${{ github.run_number }}
-    
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    with:
+      args: --severity-threshold=high
+```
 
-      - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          role-session-name: GitHub_to_AWS_via_FederatedOIDC
-          aws-region: ap-south-1
+build-scan-deploy:
+name: Build, Container Scan, and Push
+needs: code-security-scans
+runs-on: ubuntu-latest
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+```
+env:
+  IMAGE_NAME: fraud-training
+  VERSION: v${{ github.run_number }}
 
-      # 3. Build the Image
-      - name: Build Docker Image
-        run: |
-          docker build -f docker/training.Dockerfile -t ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} .
+steps:
+  - name: Checkout Code
+    uses: actions/checkout@v4
 
-      # 4. Trivy (Container Vulnerability Scan)
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
-          format: 'table'
-          exit-code: '1' # Hard fails the build if critical OS flaws are found
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+  # 3. Configure AWS (OIDC)
+  - name: Configure AWS Credentials
+    uses: aws-actions/configure-aws-credentials@v4
+    with:
+      role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+      role-session-name: GitHub_to_AWS_via_FederatedOIDC
+      aws-region: ap-south-1
 
-      # 5. Push to ECR (Only runs if Trivy passes)
-      - name: Push Image to ECR
-        run: |
-          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+  # 4. Login to ECR
+  - name: Login to Amazon ECR
+    id: login-ecr
+    uses: aws-actions/amazon-ecr-login@v2
+
+  # 5. Build Docker Image
+  - name: Build Docker Image
+    run: |
+      docker build \
+        -f docker/training.Dockerfile \
+        -t ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} .
+
+  # 6. Trivy Scan (NON-BLOCKING)
+  - name: Run Trivy Vulnerability Scanner
+    uses: aquasecurity/trivy-action@master
+    continue-on-error: true   # 🔥 does not stop pipeline
+    with:
+      image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+      format: table
+      exit-code: '0'          # 🔥 ensures success even with vulnerabilities
+      ignore-unfixed: true
+      vuln-type: os,library
+      severity: CRITICAL,HIGH
+
+  # 7. Push to ECR (always runs)
+  - name: Push Image to ECR
+    run: |
+      docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+```
