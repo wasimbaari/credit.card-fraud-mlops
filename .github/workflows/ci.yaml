@@ -1,86 +1,81 @@
 name: DevSecOps MLOps Pipeline
 
 on:
-push:
-branches:
-- main
+  push:
+    branches:
+      - main
 
 permissions:
-id-token: write
-contents: read
+  id-token: write
+  contents: read
 
 jobs:
+  code-security-scans:
+    name: Code & IaC Security Scans
+    runs-on: ubuntu-latest
 
-code-security-scans:
-name: Code & IaC Security Scans
-runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-```
-steps:
-  - name: Checkout Code
-    uses: actions/checkout@v4
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform,dockerfile
+          skip_check: CKV_TF_1
+          soft_fail: true
+          quiet: true
 
-  - name: Run Checkov
-    uses: bridgecrewio/checkov-action@master
-    with:
-      directory: .
-      framework: terraform,dockerfile
-      skip_check: CKV_TF_1
-      soft_fail: true
-      quiet: true
+      - name: Run Snyk for Python Dependencies
+        uses: snyk/actions/python@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
 
-  - name: Run Snyk for Python Dependencies
-    uses: snyk/actions/python@master
-    continue-on-error: true
+  build-scan-deploy:
+    name: Build, Container Scan, and Push
+    needs: code-security-scans
+    runs-on: ubuntu-latest
+
     env:
-      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-    with:
-      args: --severity-threshold=high
-```
+      IMAGE_NAME: fraud-training
+      VERSION: v${{ github.run_number }}
 
-build-scan-deploy:
-name: Build, Container Scan, and Push
-needs: code-security-scans
-runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-```
-env:
-  IMAGE_NAME: fraud-training
-  VERSION: v${{ github.run_number }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHub_to_AWS_via_FederatedOIDC
+          aws-region: ap-south-1
 
-steps:
-  - name: Checkout Code
-    uses: actions/checkout@v4
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-  - name: Configure AWS Credentials
-    uses: aws-actions/configure-aws-credentials@v4
-    with:
-      role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-      role-session-name: GitHub_to_AWS_via_FederatedOIDC
-      aws-region: ap-south-1
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -f docker/training.Dockerfile \
+            -t ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} .
 
-  - name: Login to Amazon ECR
-    id: login-ecr
-    uses: aws-actions/amazon-ecr-login@v2
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          format: table
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
 
-  - name: Build Docker Image
-    run: |
-      docker build \
-        -f docker/training.Dockerfile \
-        -t ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} .
-
-  - name: Run Trivy Vulnerability Scanner
-    uses: aquasecurity/trivy-action@master
-    continue-on-error: true
-    with:
-      image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
-      format: table
-      exit-code: '0'
-      ignore-unfixed: true
-      vuln-type: os,library
-      severity: CRITICAL,HIGH
-
-  - name: Push Image to ECR
-    run: |
-      docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
-
+      - name: Push Image to ECR
+        run: |
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
