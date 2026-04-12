@@ -1,28 +1,28 @@
-# docker/training.Dockerfile
-FROM python:3.10-slim
+﻿FROM python:3.10-slim
 
-# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/home/appuser/.local/bin:$PATH"
 
-# Create a non-root user and group
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd -r appgroup && useradd -r -g appgroup -m appuser
 
-# Set working directory
 WORKDIR /app
 
-# Install dependencies (do this before copying code for caching)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy application code and set ownership
+RUN pip install --no-cache-dir --upgrade jaraco.context==6.1.0 wheel==0.46.2
+
 COPY . /app
 RUN chown -R appuser:appgroup /app
 
-# Switch to the non-root user
 USER appuser
 
-# Default command
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1
+
 CMD ["python", "src/training/train.py"]
