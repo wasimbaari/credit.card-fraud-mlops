@@ -1,0 +1,37 @@
+# Version control
+.git
+.gitignore
+.dvcignore
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+venv/
+
+# Data & models (managed externally)
+data/
+
+# MLflow (optional)
+mlruns/
+mlflow.db
+
+# Infrastructure & setup scripts
+infra/
+setup_infra.py
+setup_ml_services.py
+setup_phase4.py
+
+# IDE & local config
+.vscode/
+.env
+
+# Notebooks
+notebooks/
+
+# Secrets
+*.json
+trust-policy.json
+s3-policy.json

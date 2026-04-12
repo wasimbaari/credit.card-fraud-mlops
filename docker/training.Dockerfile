@@ -4,7 +4,8 @@
 FROM python:3.10 AS builder
 
 # Install system dependencies (for building packages)
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y \
     build-essential \
     gcc \
     g++ \
@@ -17,7 +18,7 @@ WORKDIR /app
 # Copy requirements
 COPY requirements.txt .
 
-# Upgrade pip and install dependencies into a custom directory
+# Upgrade pip tools + install dependencies into custom location
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --prefix=/install --no-cache-dir -r requirements.txt
 
@@ -30,8 +31,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/home/appuser/.local/bin:$PATH"
 
-# Minimal runtime dependencies only
-RUN apt-get update && apt-get install -y \
+# Security updates + minimal runtime deps
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -40,7 +42,7 @@ RUN groupadd -r appgroup && useradd -r -g appgroup -m appuser
 
 WORKDIR /app
 
-# Copy only installed dependencies from builder
+# Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
 # Copy application code
