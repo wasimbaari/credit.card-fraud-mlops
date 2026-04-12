@@ -2,13 +2,15 @@ name: DevSecOps MLOps Pipeline
 
 on:
 push:
-branches: [ main ]
+branches:
+- main
 
 permissions:
 id-token: write
 contents: read
 
 jobs:
+
 code-security-scans:
 name: Code & IaC Security Scans
 runs-on: ubuntu-latest
@@ -18,7 +20,6 @@ steps:
   - name: Checkout Code
     uses: actions/checkout@v4
 
-  # 1. Checkov (IaC & Dockerfile Scan)
   - name: Run Checkov
     uses: bridgecrewio/checkov-action@master
     with:
@@ -28,7 +29,6 @@ steps:
       soft_fail: true
       quiet: true
 
-  # 2. Snyk (Dependency Scan)
   - name: Run Snyk for Python Dependencies
     uses: snyk/actions/python@master
     continue-on-error: true
@@ -52,7 +52,6 @@ steps:
   - name: Checkout Code
     uses: actions/checkout@v4
 
-  # 3. Configure AWS (OIDC)
   - name: Configure AWS Credentials
     uses: aws-actions/configure-aws-credentials@v4
     with:
@@ -60,31 +59,27 @@ steps:
       role-session-name: GitHub_to_AWS_via_FederatedOIDC
       aws-region: ap-south-1
 
-  # 4. Login to ECR
   - name: Login to Amazon ECR
     id: login-ecr
     uses: aws-actions/amazon-ecr-login@v2
 
-  # 5. Build Docker Image
   - name: Build Docker Image
     run: |
       docker build \
         -f docker/training.Dockerfile \
         -t ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} .
 
-  # 6. Trivy Scan (NON-BLOCKING)
   - name: Run Trivy Vulnerability Scanner
     uses: aquasecurity/trivy-action@master
-    continue-on-error: true   # 🔥 does not stop pipeline
+    continue-on-error: true
     with:
       image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
       format: table
-      exit-code: '0'          # 🔥 ensures success even with vulnerabilities
+      exit-code: '0'
       ignore-unfixed: true
       vuln-type: os,library
       severity: CRITICAL,HIGH
 
-  # 7. Push to ECR (always runs)
   - name: Push Image to ECR
     run: |
       docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
