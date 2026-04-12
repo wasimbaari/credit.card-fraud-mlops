@@ -9,11 +9,39 @@ permissions:
   contents: read
 
 jobs:
-  build-and-deploy:
-    name: Build and Push to ECR
+  code-security-scans:
+    name: Code & IaC Security Scans
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 1. Checkov (Infrastructure as Code & Dockerfile Scan)
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform,dockerfile
+          skip_check: CKV_TF_1 # Skips module hash requirement
+          soft_fail: true      # Logs warnings but doesn't hard-stop the pipeline
+          quiet: true
+
+      # 2. Snyk (Software Composition Analysis)
+      - name: Run Snyk for Python Dependencies
+        uses: snyk/actions/python@master
+        continue-on-error: true # Continues despite unpatchable mlflow CVEs
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
+  build-scan-deploy:
+    name: Build, Container Scan, and Push
+    needs: code-security-scans
     runs-on: ubuntu-latest
     env:
       IMAGE_NAME: fraud-training
+      # Versioning via GitHub Run Number (e.g., v8, v9)
       VERSION: v${{ github.run_number }}
     
     steps:
@@ -31,7 +59,23 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and Push Image
+      # 3. Build the Image
+      - name: Build Docker Image
         run: |
           docker build -f docker/training.Dockerfile -t ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} .
+
+      # 4. Trivy (Container Vulnerability Scan)
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          format: 'table'
+          exit-code: '1' # Hard fails the build if critical OS flaws are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # 5. Push to ECR (Only runs if Trivy passes)
+      - name: Push Image to ECR
+        run: |
           docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
