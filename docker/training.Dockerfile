@@ -18,9 +18,10 @@ WORKDIR /app
 # Copy requirements
 COPY requirements.txt .
 
-# Upgrade pip tools + install dependencies into custom location
-RUN pip install --upgrade pip setuptools wheel && \
+# Upgrade pip tools to patched versions, then install dependencies
+RUN pip install --upgrade pip "setuptools" "wheel>=0.46.2" "jaraco.context>=6.1.0" && \
     pip install --prefix=/install --no-cache-dir -r requirements.txt
+
 
 # =========================
 # 2️⃣ Runtime Stage (Light)
@@ -45,17 +46,14 @@ WORKDIR /app
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application code
-COPY . /app
-
-# Set permissions
-RUN chown -R appuser:appgroup /app
+# Copy application code with correct ownership (avoids extra chown layer)
+COPY --chown=appuser:appgroup . /app
 
 USER appuser
 
-# Healthcheck
+# Healthcheck — verify core ML imports are available
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
+    CMD python -c "import pandas, sklearn, xgboost, mlflow; import sys; sys.exit(0)" || exit 1
 
 # Run app
 CMD ["python", "src/training/train.py"]
